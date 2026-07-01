@@ -4,14 +4,16 @@
 # Die JAR wird NICHT neu gebaut - es wird die im Repo liegende Taschenrechner.jar genutzt.
 #
 # Ablauf:
-#   1. jpackage (im vorinstallierten JDK) macht aus der JAR ein natives .exe + Runtime
-#   2. winapp CLI wird als portables ZIP heruntergeladen (winget ist auf dem Runner nicht verfuegbar)
-#   3. Package.appxmanifest erzeugen
-#   4. Entwickler-Zertifikat erzeugen (devcert.pfx)
-#   5. MSIX bauen + signieren (winapp pack)
-#   6. Oeffentliches Zertifikat (.cer) zum Vertrauen exportieren
+#   1. jpackage (vorinstalliertes JDK) macht aus der JAR ein natives .exe + Runtime
+#   2. winapp CLI als portables ZIP laden (winget ist auf dem Runner nicht verfuegbar)
+#   3. Package.appxmanifest erzeugen + Publisher auf CN=Taschenrechner setzen
+#   4. Selbstsigniertes Zertifikat erzeugen (CurrentUser-Store, KEIN Admin noetig)
+#      -> devcert.pfx (zum Signieren) + devcert.cer (zum Vertrauen/Installieren)
+#   5. MSIX bauen + signieren (winapp package/pack)
 #
 # Downloads (Artefakte): Taschenrechner*.msix  und  devcert.cer
+# Installieren beim Nutzer: devcert.cer in "Vertrauenswuerdige Personen" importieren,
+#   dann  Add-AppxPackage .\Taschenrechner*.msix
 
 stages:
   - package
@@ -22,6 +24,8 @@ build-msix-windows:
     - saas-windows-medium-amd64
   variables:
     APP_NAME: "Taschenrechner"
+    PUBLISHER: "CN=Taschenrechner"
+    CERT_PW: "Taschenrechner!2026"
     WINAPP_URL: "https://github.com/microsoft/winappCli/releases/download/v0.4.0/winappcli-x64.zip"
   script:
     # --- 0) JDK/jpackage bereitstellen (auf dem Runner meist schon vorhanden) ---
@@ -41,22 +45,33 @@ build-msix-windows:
     - Expand-Archive -Path winappcli.zip -DestinationPath winappcli -Force
     - $winapp = Join-Path (Resolve-Path .\winappcli) 'winapp.exe'
     - '& $winapp --version'
+    # Verfuegbare Befehle ins Log schreiben (Hilfe bei kuenftigem Debugging)
+    - '& $winapp --help'
 
-    # --- 3) Manifest im App-Ordner erzeugen ---
+    # --- 3) Manifest erzeugen und Publisher setzen ---
     - Push-Location dist\$env:APP_NAME
     - '& $winapp manifest generate --executable ".\$env:APP_NAME.exe"'
     - Pop-Location
+    - $manifestPath = "dist\$env:APP_NAME\Package.appxmanifest"
+    - '[xml]$m = Get-Content $manifestPath'
+    - $m.Package.Identity.Publisher = $env:PUBLISHER
+    - $m.Save((Resolve-Path $manifestPath))
 
-    # --- 4) Entwickler-Zertifikat erzeugen -> $HOME\devcert.pfx ---
-    - '& $winapp cert generate'
+    # --- 4) Selbstsigniertes Zertifikat erzeugen (kein Admin noetig) ---
+    - >
+      $cert = New-SelfSignedCertificate -Type Custom -Subject $env:PUBLISHER
+      -KeyUsage DigitalSignature -FriendlyName "$env:APP_NAME Dev Cert"
+      -CertStoreLocation "Cert:\CurrentUser\My" -KeyExportPolicy Exportable
+      -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3","2.5.29.19={text}")
+    - $pw = ConvertTo-SecureString $env:CERT_PW -Force -AsPlainText
+    - Export-PfxCertificate -Cert $cert -FilePath "devcert.pfx" -Password $pw | Out-Null
+    - Export-Certificate -Cert $cert -FilePath "devcert.cer" | Out-Null
 
-    # --- 5) MSIX bauen und signieren ---
-    - '& $winapp pack ".\dist\$env:APP_NAME" --cert "$HOME\devcert.pfx"'
-    # Ergebnis: Taschenrechner*.msix im aktuellen Verzeichnis
-
-    # --- 6) Oeffentliches Zertifikat (.cer) zum Vertrauen exportieren ---
-    - $cert = Get-PfxCertificate -FilePath "$HOME\devcert.pfx"
-    - Export-Certificate -Cert $cert -FilePath ".\devcert.cer" | Out-Null
+    # --- 5) MSIX bauen und signieren (richtigen Befehlsnamen automatisch waehlen) ---
+    - $help = (& $winapp --help 2>&1 | Out-String)
+    - if ($help -match '(?m)^\s*package\b') { $packCmd = 'package' } else { $packCmd = 'pack' }
+    - 'Write-Host "Nutze winapp $packCmd"'
+    - '& $winapp $packCmd ".\dist\$env:APP_NAME" --cert ".\devcert.pfx" --cert-password $env:CERT_PW'
 
     # --- Kontrolle: was wurde erzeugt? ---
     - Get-ChildItem -Path . -Include *.msix,*.cer -Recurse | Select-Object FullName
