@@ -29,5 +29,7 @@ bin/
 ### Mac OS ###
 .DS_Store
 
-### Build-Artefakte (JAR wird aus src/ via build.sh erzeugt) ###
+### Build-Artefakte ###
 *.jar
+# Diese JAR wird bewusst mitversioniert und von der Pipeline zum MSIX verpackt:
+!Taschenrechner.jar
