@@ -1,9 +1,72 @@
-# Minimale GitLab CI/CD Pipeline
+# GitLab CI/CD Pipeline: baut aus der Java-App ein signiertes MSIX-Paket
 # Umgebung: Windows (GitLab.com SaaS Windows Runner)
-# Gibt nur "hello world" aus.
+#
+# Ablauf:
+#   1. Java (JDK inkl. jpackage) installieren
+#   2. JAR aus dem Quellcode bauen
+#   3. Mit jpackage ein natives Taschenrechner.exe + gebuendeltem Runtime erzeugen
+#   4. winapp CLI installieren
+#   5. Package.appxmanifest erzeugen
+#   6. Entwickler-Zertifikat erzeugen (devcert.pfx)
+#   7. MSIX bauen + signieren (winapp pack)
+#   8. Oeffentliches Zertifikat (.cer) zum Vertrauen exportieren
+#
+# Downloads (Artefakte): Taschenrechner*.msix  und  devcert.cer
 
-hello-world:
+stages:
+  - package
+
+build-msix-windows:
+  stage: package
   tags:
     - saas-windows-medium-amd64
+  variables:
+    APP_NAME: "Taschenrechner"
   script:
-    - echo "hello world"
+    # --- 1) Java (JDK inkl. jpackage) installieren ---
+    - choco install openjdk --no-progress -y
+    - Import-Module "$env:ChocolateyInstall\helpers\chocolateyProfile.psm1"
+    - refreshenv
+    - java -version
+
+    # --- 2) JAR aus dem Quellcode bauen ---
+    - javac -d out src/Main.java
+    - '"Main-Class: Main" | Out-File -Encoding ascii manifest.txt'
+    - jar --create --file Taschenrechner.jar --manifest manifest.txt -C out Main.class -C out Rechnerfenster.class
+
+    # --- 3) Natives .exe mit gebuendeltem Java-Runtime (jpackage app-image) ---
+    - New-Item -ItemType Directory -Force -Path input | Out-Null
+    - Copy-Item Taschenrechner.jar input\
+    - jpackage --type app-image --name $env:APP_NAME --input input --main-jar Taschenrechner.jar --main-class Main --dest dist
+    # Ergebnis: dist\Taschenrechner\Taschenrechner.exe (+ runtime\, app\)
+
+    # --- 4) winapp CLI installieren ---
+    - winget install microsoft.winappcli --source winget --accept-source-agreements --accept-package-agreements
+    - refreshenv
+    - winapp --version
+
+    # --- 5) Manifest im App-Ordner erzeugen ---
+    - Push-Location dist\$env:APP_NAME
+    - winapp manifest generate --executable ".\$env:APP_NAME.exe"
+    - Pop-Location
+
+    # --- 6) Entwickler-Zertifikat erzeugen -> $HOME\devcert.pfx ---
+    - winapp cert generate
+
+    # --- 7) MSIX bauen und signieren ---
+    - winapp pack ".\dist\$env:APP_NAME" --cert "$HOME\devcert.pfx"
+    # Ergebnis: Taschenrechner*.msix im aktuellen Verzeichnis
+
+    # --- 8) Oeffentliches Zertifikat (.cer) zum Vertrauen exportieren ---
+    - $cert = Get-PfxCertificate -FilePath "$HOME\devcert.pfx"
+    - Export-Certificate -Cert $cert -FilePath ".\devcert.cer" | Out-Null
+
+    # --- Kontrolle: was wurde erzeugt? ---
+    - Get-ChildItem -Path . -Include *.msix,*.cer -Recurse
+  artifacts:
+    name: "$APP_NAME-msix-$CI_COMMIT_SHORT_SHA"
+    paths:
+      - "**/*.msix"
+      - "*.msix"
+      - devcert.cer
+    expire_in: 4 weeks
