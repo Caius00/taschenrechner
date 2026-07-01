@@ -69,11 +69,8 @@ build-msix-windows:
     - Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
     - .\ci\make-cert.ps1 -Subject $env:PUBLISHER -Password $env:CERT_PW
 
-    # --- 5) MSIX bauen und signieren (richtigen Befehlsnamen automatisch waehlen) ---
-    - $help = (& $winapp --help 2>&1 | Out-String)
-    - if ($help -match '(?m)^\s*package\b') { $packCmd = 'package' } else { $packCmd = 'pack' }
-    - 'Write-Host "Nutze winapp $packCmd"'
-    - '& $winapp $packCmd ".\dist\$env:APP_NAME" --cert ".\devcert.pfx" --cert-password $env:CERT_PW'
+    # --- 5) MSIX bauen und signieren (--verbose fuer Fehlerdetails) ---
+    - '& $winapp package ".\dist\$env:APP_NAME" --cert ".\devcert.pfx" --cert-password $env:CERT_PW --verbose'
 
     # --- Kontrolle: was wurde erzeugt? ---
     - Get-ChildItem -Path . -Include *.msix,*.cer -Recurse | Select-Object FullName
