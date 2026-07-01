@@ -1,0 +1,9 @@
+# Minimale GitLab CI/CD Pipeline
+# Umgebung: Windows (GitLab.com SaaS Windows Runner)
+# Gibt nur "hello world" aus.
+
+hello-world:
+  tags:
+    - saas-windows-medium-amd64
+  script:
+    - echo "hello world"
