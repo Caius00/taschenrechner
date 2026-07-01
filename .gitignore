@@ -33,3 +33,8 @@ bin/
 *.jar
 # Diese JAR wird bewusst mitversioniert und von der Pipeline zum MSIX verpackt:
 !Taschenrechner.jar
+
+### Archive gehoeren nicht ins Repo (zu gross fuer GitLab, 100 MiB Limit) ###
+# Die Pipeline laedt Corretto zur Laufzeit herunter (siehe .gitlab-ci.yml).
+*.tar.gz
+*.zip
