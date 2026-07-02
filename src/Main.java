@@ -13,8 +13,36 @@ import java.awt.image.BufferedImage;
 public class Main {
 
     public static void main(String[] args) {
+        // Headless-Selbsttest (fuer CI): rechnet ohne GUI und beendet mit Exit-Code.
+        if (args.length > 0 && args[0].equals("--selftest")) {
+            selbsttest();
+            return;
+        }
         // GUI immer im Event-Dispatch-Thread von Swing aufbauen
         SwingUtilities.invokeLater(Rechnerfenster::new);
+    }
+
+    /** Prueft die Rechenlogik ohne GUI und beendet mit Exit-Code 0 (ok) bzw. 1 (Fehler). */
+    private static void selbsttest() {
+        boolean ok = true;
+        ok &= pruefe("5 + 3", 8, Rechnerfenster.rechne(5, 3, "+"));
+        ok &= pruefe("5 - 3", 2, Rechnerfenster.rechne(5, 3, "-"));
+        ok &= pruefe("5 * 3", 15, Rechnerfenster.rechne(5, 3, "*"));
+        ok &= pruefe("5 / 2", 2.5, Rechnerfenster.rechne(5, 2, "/"));
+        if (Rechnerfenster.rechne(5, 0, "/") != null) {   // Teilen durch 0 -> null
+            System.out.println("  FEHLER: 5 / 0 haette null ergeben muessen");
+            ok = false;
+        }
+        System.out.println(ok ? "Selbsttest OK" : "Selbsttest FEHLGESCHLAGEN");
+        System.exit(ok ? 0 : 1);
+    }
+
+    private static boolean pruefe(String was, double erwartet, Double ist) {
+        boolean ok = ist != null && Math.abs(ist - erwartet) < 1e-9;
+        if (!ok) {
+            System.out.println("  FEHLER: " + was + " = " + ist + " (erwartet " + erwartet + ")");
+        }
+        return ok;
     }
 }
 

@@ -105,6 +105,15 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "winapp package fehlgeschlagen (exit $LASTEXITCODE)" }
           Get-ChildItem *.msix, *.cer | Select-Object Name, Length
 
+      - name: MSIX + Zertifikat fuer Test-Stufe weiterreichen
+        uses: actions/upload-artifact@v4
+        with:
+          name: msix-package
+          path: |
+            ${{ env.APP_NAME }}.msix
+            devcert.cer
+          if-no-files-found: error
+
       # Beide Dateien einzeln (ohne ZIP) als Release-Assets veroeffentlichen
       - name: Publish MSIX + Zertifikat als Release (ohne ZIP)
         shell: pwsh
@@ -118,3 +127,66 @@ jobs:
               --notes "Automatisch gebautes, signiertes MSIX + oeffentliches Zertifikat (devcert.cer)."
           }
           gh release upload $tag ".\$($env:APP_NAME).msix" ".\devcert.cer" --clobber
+
+  # ---------- Stufe 3: Test auf frischer VM ----------
+  test-msix:
+    needs: package-sign
+    runs-on: windows-latest      # frische VM
+    steps:
+      - name: App-Image (aus Stufe 1) laden
+        uses: actions/download-artifact@v4
+        with:
+          name: app-image
+          path: dist
+
+      - name: Funktionstest headless (gebuendeltes Corretto + Rechenlogik)
+        shell: pwsh
+        run: |
+          $java = "dist\$($env:APP_NAME)\runtime\bin\java.exe"
+          $jar  = "dist\$($env:APP_NAME)\app\$($env:APP_NAME).jar"
+          & $java -cp $jar Main --selftest
+          if ($LASTEXITCODE -ne 0) { throw "Selbsttest fehlgeschlagen (exit $LASTEXITCODE)" }
+
+      - name: MSIX-Paket (aus Stufe 2) laden
+        uses: actions/download-artifact@v4
+        with:
+          name: msix-package
+          path: pkg
+
+      - name: Zertifikat vertrauen + MSIX installieren
+        shell: pwsh
+        run: |
+          Import-Certificate -FilePath "pkg\devcert.cer" -CertStoreLocation Cert:\LocalMachine\TrustedPeople | Out-Null
+          Add-AppxPackage -Path "pkg\$($env:APP_NAME).msix"
+          $pkg = Get-AppxPackage "*$($env:APP_NAME)*"
+          if (-not $pkg) { throw "MSIX wurde nicht installiert" }
+          Write-Host "OK installiert: $($pkg.PackageFullName)"
+          Write-Host "  Publisher: $($pkg.Publisher)"
+
+      - name: Installierte App starten und pruefen, dass sie laeuft
+        shell: pwsh
+        run: |
+          $pkg = Get-AppxPackage "*$($env:APP_NAME)*"
+          $appId = (Get-AppxPackageManifest $pkg).Package.Applications.Application.Id
+          Write-Host "Starte: shell:AppsFolder\$($pkg.PackageFamilyName)!$appId"
+          Start-Process "shell:AppsFolder\$($pkg.PackageFamilyName)!$appId"
+          # bis zu 20s auf den Prozess warten
+          $proc = $null
+          for ($i = 0; $i -lt 20; $i++) {
+            Start-Sleep -Seconds 1
+            $proc = Get-Process $env:APP_NAME -ErrorAction SilentlyContinue
+            if ($proc) { break }
+          }
+          if (-not $proc) { throw "App-Prozess '$($env:APP_NAME)' wurde nach dem Start nicht gefunden" }
+          # kurz laufen lassen und pruefen, dass sie nicht sofort abstuerzt
+          Start-Sleep -Seconds 3
+          if (-not (Get-Process -Id $proc.Id -ErrorAction SilentlyContinue)) {
+            throw "App ist direkt nach dem Start abgestuerzt"
+          }
+          Write-Host "App laeuft (PID $($proc.Id)) - Start-Test bestanden."
+          Stop-Process -Id $proc.Id -Force
+
+      - name: Aufraeumen (Paket entfernen)
+        if: always()
+        shell: pwsh
+        run: Get-AppxPackage "*$($env:APP_NAME)*" | Remove-AppxPackage -ErrorAction SilentlyContinue
