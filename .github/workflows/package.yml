@@ -87,6 +87,11 @@ jobs:
                   ".zip" { Expand-Archive -Path $file -DestinationPath $packDir -Force }
                   ".7z"  { & $sevenZip x $file "-o$packDir" -y | Out-Null }
                   ".exe" { Copy-Item $file (Join-Path $packDir ([IO.Path]::GetFileName($file))) }
+                  ".msi" {
+                    $abs = (Resolve-Path $file).Path
+                    $mp = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @("/a","`"$abs`"","/qb","TARGETDIR=`"$packDir`"")
+                    if ($mp.ExitCode -ne 0) { throw "msiexec /a exit $($mp.ExitCode)" }
+                  }
                   default { throw "Unbekannter Download-Typ ($file)" }
                 }
               }

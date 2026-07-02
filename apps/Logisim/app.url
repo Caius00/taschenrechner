@@ -1,0 +1,3 @@
+# Java-Swing-GUI (Logisim-evolution, jpackage) mit gebuendeltem JRE.
+# URL-Modus: kommt als MSI -> wird zur Build-Zeit per msiexec /a entpackt.
+url = https://github.com/logisim-evolution/logisim-evolution/releases/download/v4.1.0/logisim-evolution-4.1.0-amd64.msi
