@@ -6,10 +6,10 @@ name: Package apps as MSIX
 #   A) Dateien committen   -> lege die .exe + zugehoerige Dateien direkt rein
 #                             (nur fuer KLEINE Apps, GitHub-Limit 100 MB/Datei).
 #   B) URL (fuer grosse Apps) -> lege NUR eine Datei 'app.url' rein mit dem
-#                             Download-Link. Die Pipeline laedt+entpackt zur
-#                             Build-Zeit (kein Binary im Repo, kein Groessenlimit).
+#                             Download-Link. Die Pipeline laedt+entpackt zur Build-Zeit.
 #
-# Ergebnis: pro App ein <Name>.msix + <Name>.cer im Release 'latest'.
+# Alle Apps werden mit EINEM gemeinsamen Zertifikat signiert.
+# Ergebnis: pro App ein <Name>.msix + EIN gemeinsames certificate.cer im Release 'latest'.
 
 on:
   push:
@@ -17,7 +17,8 @@ on:
   workflow_dispatch:
 
 env:
-  CERT_PW: "Package!2026"   # PFX-Passwort (Wegwerf, kein echtes Geheimnis)
+  CERT_PW: "Package!2026"        # PFX-Passwort (Wegwerf, kein echtes Geheimnis)
+  PUBLISHER: "CN=MSIXPackager"   # gemeinsamer Publisher = Subject des einen Zertifikats
 
 jobs:
   package:
@@ -47,7 +48,15 @@ jobs:
           $appDirs = @(Get-ChildItem -Path apps -Directory -ErrorAction SilentlyContinue)
           if ($appDirs.Count -eq 0) { Write-Host "Keine App-Ordner unter apps/."; return }
 
-          $failed = @()
+          # ---- EIN gemeinsames Zertifikat fuer ALLE Apps ----
+          $pfx = Join-Path $outPath "certificate.pfx"
+          winapp cert generate --publisher $env:PUBLISHER --password $env:CERT_PW `
+            --output $pfx --export-cer --if-exists overwrite
+          if ($LASTEXITCODE -ne 0) { throw "cert generate (gemeinsames Zertifikat)" }
+          Write-Host "Gemeinsames Zertifikat: $env:PUBLISHER"
+
+          $signtool = $null
+          $failed   = @()
           foreach ($dir in $appDirs) {
             $name = $dir.Name
             Write-Host "===== App '$name' ====="
@@ -82,8 +91,7 @@ jobs:
                 }
               }
               else {
-                # ---- Modus A: committete Dateien ----
-                $packDir = $dir.FullName
+                $packDir = $dir.FullName   # Modus A
               }
 
               # Einstiegs-exe finden (Hint bevorzugt); verpackt wird der ORDNER DER EXE
@@ -97,21 +105,34 @@ jobs:
 
               Push-Location $appRoot
               try {
-                # 1) Manifest (Icon aus der exe), 2) Publisher setzen
+                # 1) Manifest (Icon aus exe), 2) gemeinsamen Publisher setzen
                 winapp manifest generate --executable (".\" + $exe.Name)
                 if ($LASTEXITCODE -ne 0) { throw "manifest generate" }
                 [xml]$m = Get-Content "Package.appxmanifest"
-                $m.Package.Identity.Publisher = "CN=$name"
+                $m.Package.Identity.Publisher = $env:PUBLISHER
                 $m.Package.Properties.PublisherDisplayName = $name
                 $m.Save((Resolve-Path "Package.appxmanifest").Path)
 
-                # 3) Zertifikat, 4) MSIX bauen + signieren
-                winapp cert generate --manifest "Package.appxmanifest" --password $env:CERT_PW `
-                  --output (Join-Path $outPath "$name.pfx") --export-cer --if-exists overwrite
-                if ($LASTEXITCODE -ne 0) { throw "cert generate" }
-                winapp package "." --output (Join-Path $outPath "$name.msix") `
-                  --cert (Join-Path $outPath "$name.pfx") --cert-password $env:CERT_PW --verbose
+                # 3) MSIX UNSIGNIERT bauen
+                $msixOut = Join-Path $outPath "$name.msix"
+                winapp package "." --output $msixOut
                 if ($LASTEXITCODE -ne 0) { throw "package" }
+
+                # 4) 64-bit signtool suchen (einmalig) und mit dem GEMEINSAMEN Zertifikat signieren
+                if (-not $signtool) {
+                  foreach ($r in @("$HOME\.winapp","$env:LOCALAPPDATA\.winapp","$env:ProgramFiles\Windows Kits","${env:ProgramFiles(x86)}\Windows Kits")) {
+                    if (Test-Path $r) {
+                      $cands = Get-ChildItem $r -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue
+                      $x64 = $cands | Where-Object { $_.FullName -match '\\x64\\' } | Select-Object -First 1
+                      if ($x64)   { $signtool = $x64.FullName; break }
+                      if ($cands) { $signtool = ($cands | Select-Object -First 1).FullName; break }
+                    }
+                  }
+                  Write-Host "signtool: $signtool"
+                }
+                if (-not $signtool) { throw "signtool.exe nicht gefunden" }
+                & $signtool sign /fd SHA256 /f $pfx /p $env:CERT_PW $msixOut
+                if ($LASTEXITCODE -ne 0) { throw "signtool (exit $LASTEXITCODE)" }
                 Write-Host "OK -> $name.msix"
               }
               finally { Pop-Location }
@@ -122,14 +143,14 @@ jobs:
             }
           }
 
-          # private .pfx nicht veroeffentlichen
+          # gemeinsames certificate.cer behalten, private .pfx entfernen
           Remove-Item (Join-Path $outPath "*.pfx") -ErrorAction SilentlyContinue
           Write-Host "=== Ergebnis ==="
           Get-ChildItem $outPath | Select-Object Name, Length
           if ($failed.Count -gt 0) { throw "Fehlgeschlagene Apps: $($failed -join ', ')" }
 
       - name: Pakete als Release speichern
-        if: always()          # erfolgreiche Pakete auch veroeffentlichen, wenn eine App scheiterte
+        if: always()
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -140,7 +161,7 @@ jobs:
           gh release view $tag *> $null
           if ($LASTEXITCODE -ne 0) {
             gh release create $tag --title "MSIX-Pakete (neueste Version)" `
-              --notes "Automatisch verpackte & signierte MSIX-Pakete. Pro App: <Name>.msix + <Name>.cer."
+              --notes "Automatisch verpackte & signierte MSIX-Pakete. Alle mit EINEM Zertifikat signiert: einmal certificate.cer vertrauen, dann jede <Name>.msix installieren."
           }
           Get-ChildItem output\*.msix, output\*.cer | ForEach-Object {
             gh release upload $tag $_.FullName --clobber
