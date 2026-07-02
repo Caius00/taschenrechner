@@ -54,6 +54,16 @@ jobs:
           winapp manifest generate --executable ".\$($env:APP_NAME).exe"
           Pop-Location
 
+      - name: Set publisher in manifest (statt "Unknown")
+        shell: pwsh
+        run: |
+          $manifestPath = "dist\$($env:APP_NAME)\Package.appxmanifest"
+          [xml]$m = Get-Content $manifestPath
+          $m.Package.Identity.Publisher = "CN=Taschenrechner"
+          $m.Package.Properties.PublisherDisplayName = "Taschenrechner"
+          $m.Save((Resolve-Path $manifestPath))
+          Write-Host "Publisher gesetzt: CN=Taschenrechner / Taschenrechner"
+
       - name: Create signing certificate (winapp cert generate)
         shell: pwsh
         run: |
