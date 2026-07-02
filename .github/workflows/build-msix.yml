@@ -15,6 +15,8 @@ on:
 jobs:
   build-msix:
     runs-on: windows-latest
+    permissions:
+      contents: write        # noetig, um ein Release zu erstellen/aktualisieren
     env:
       APP_NAME: Taschenrechner
       CERT_PW: "Taschenrechner!2026"
@@ -70,11 +72,16 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "winapp package fehlgeschlagen (exit $LASTEXITCODE)" }
           Get-ChildItem *.msix, *.cer | Select-Object Name, Length
 
-      - name: Upload artifacts (MSIX + Zertifikat)
-        uses: actions/upload-artifact@v4
-        with:
-          name: Taschenrechner-msix
-          path: |
-            *.msix
-            *.cer
-          if-no-files-found: error
+      # Beide Dateien einzeln (ohne ZIP) als Release-Assets veroeffentlichen
+      - name: Publish MSIX + Zertifikat als Release (ohne ZIP)
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "latest"
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --title "Taschenrechner (neueste Version)" `
+              --notes "Automatisch gebautes, signiertes MSIX + oeffentliches Zertifikat (devcert.cer)."
+          }
+          gh release upload $tag ".\$($env:APP_NAME).msix" ".\devcert.cer" --clobber
