@@ -1,0 +1,5 @@
+# Java-GUI-App (JavaFX, jpackage) mit gebuendeltem JRE.
+# URL-Modus: wird zur Build-Zeit geladen + entpackt - nichts Grosses im Git.
+url = https://github.com/JabRef/jabref/releases/download/v5.15/JabRef-5.15-portable_windows.zip
+# Einstiegspunkt (App-Image enthaelt nur diese eine exe; Hint zur Sicherheit):
+exe = JabRef\JabRef.exe

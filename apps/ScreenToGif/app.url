@@ -1,0 +1,4 @@
+# URL-Modus: grosse GUI-App (.NET, mit gebuendeltem Runtime).
+# Wird zur Build-Zeit geladen + entpackt - nichts Grosses im Git-Repo.
+url = https://github.com/NickeManarin/ScreenToGif/releases/download/2.43.1/ScreenToGif.2.43.1.Portable.x64.zip
+# optional: exe = Unterordner\Start.exe   (falls mehrere/verschachtelte exen)

@@ -1,40 +1,7 @@
-### IntelliJ IDEA ###
-out/
-!**/src/main/**/out/
-!**/src/test/**/out/
-.kotlin
-
-### Eclipse ###
-.apt_generated
-.classpath
-.factorypath
-.project
-.settings
-.springBeans
-.sts4-cache
-bin/
-!**/src/main/**/bin/
-!**/src/test/**/bin/
-
-### NetBeans ###
-/nbproject/private/
-/nbbuild/
-/dist/
-/nbdist/
-/.nb-gradle/
-
-### VS Code ###
-.vscode/
-
-### Mac OS ###
+# Betriebssystem / IDE
 .DS_Store
+.idea/
+*.iml
 
-### Build-Artefakte ###
-*.jar
-# Diese JAR wird bewusst mitversioniert und von der Pipeline zum MSIX verpackt:
-!Taschenrechner.jar
-
-### Archive gehoeren nicht ins Repo (zu gross fuer GitLab, 100 MiB Limit) ###
-# Die Pipeline laedt Corretto zur Laufzeit herunter (siehe .gitlab-ci.yml).
-*.tar.gz
-*.zip
+# Von der Pipeline erzeugte Ausgaben
+output/

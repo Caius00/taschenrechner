@@ -1,42 +1,50 @@
+# MSIX-Paketierung
 
-# Taschenrechner
+Automatische Fabrik: **fertige Windows-Programme rein → signierte MSIX-Pakete raus.**
 
-Ein einfacher Taschenrechner mit grafischer Oberflaeche (Java Swing).
-Kann **plus (+), minus (−), mal (\*)** und **geteilt (/)** rechnen und hat ein eigenes Icon.
+Du legst deine Programme unter `apps/` ab, pushst, und eine GitHub-Actions-Pipeline
+findet jede App, verpackt sie zu einem **signierten MSIX** und legt sie als
+**Release** ab – kein manuelles Bauen, Signieren oder Hochladen.
 
-## Voraussetzungen
+## Bedienung
 
-- Java (JDK) 17 oder neuer (`java -version` zum Pruefen)
+1. Pro Programm einen Ordner unter `apps/` anlegen – zwei Wege (Details siehe `apps/README.md`):
+   - **Kleine App:** Dateien direkt reinlegen (jede Datei < 100 MB)
+     ```
+     apps/MeinProgramm/MeinProgramm.exe   (+ alle zugehoerigen Dateien)
+     ```
+   - **Grosse App:** nur einen Link reinlegen – wird zur Build-Zeit geladen
+     ```
+     apps/MeineGrosseApp/app.url          (Inhalt: url = https://.../app-portable.zip)
+     ```
+2. Committen und pushen:
+   ```bash
+   git add apps/
+   git commit -m "MeinProgramm hinzugefuegt"
+   git push
+   ```
+3. Die Pipeline läuft automatisch und veröffentlicht die Pakete im Release
+   **`latest`** (im Reiter *Releases*): pro App eine `<Name>.msix` und das
+   zugehörige `<Name>.cer`.
 
-## JAR aus dem Code bauen
+## Was die Pipeline macht (`.github/workflows/package.yml`)
 
-```bash
-./build.sh
+Für jeden Ordner unter `apps/`:
+1. **winapp CLI** per winget installieren.
+2. **Manifest** erzeugen (`winapp manifest generate` – Icon wird aus der exe übernommen).
+3. **Publisher/Anzeigename** = Ordnername.
+4. **Zertifikat** erzeugen (selbstsigniert, passend zum Manifest).
+5. **MSIX bauen + signieren** (`winapp package --cert`).
+6. **Release** aktualisieren (MSIX + öffentliches Zertifikat).
+
+## Installieren beim Nutzer (Windows)
+
+Da selbstsigniert, muss das Zertifikat einmalig als vertrauenswürdig importiert werden:
+
+```powershell
+Import-Certificate -FilePath .\<Name>.cer -CertStoreLocation Cert:\LocalMachine\TrustedPeople
+Add-AppxPackage .\<Name>.msix
 ```
 
-Das kompiliert `src/Main.java` und erzeugt daraus die ausfuehrbare `Taschenrechner.jar`.
-
-Alternativ von Hand:
-
-```bash
-javac -d out src/Main.java
-echo "Main-Class: Main" > manifest.txt
-jar --create --file Taschenrechner.jar --manifest manifest.txt \
-    -C out Main.class -C out Rechnerfenster.class
-rm manifest.txt
-```
-
-## Starten
-
-```bash
-java -jar Taschenrechner.jar
-```
-
-Oder per Doppelklick auf `Taschenrechner.jar` (macOS: Rechtsklick → Öffnen).
-
-## Projektstruktur
-
-```
-src/Main.java     Der komplette Quellcode (GUI, Rechenlogik, Icon)
-build.sh          Baut die Taschenrechner.jar aus dem Code
-```
+Für eine öffentliche Verteilung ohne diesen Schritt wäre ein Zertifikat einer
+vertrauenswürdigen Zertifizierungsstelle (CA) statt des selbstsignierten nötig.

@@ -1,0 +1,137 @@
+name: Package apps as MSIX
+
+# Verpackt Windows-Programme automatisch zu signierten MSIX-Paketen.
+#
+# Zwei Wege, pro Ordner unter apps/<Name>/ :
+#   A) Dateien committen   -> lege die .exe + zugehoerige Dateien direkt rein
+#                             (nur fuer KLEINE Apps, GitHub-Limit 100 MB/Datei).
+#   B) URL (fuer grosse Apps) -> lege NUR eine Datei 'app.url' rein mit dem
+#                             Download-Link. Die Pipeline laedt+entpackt zur
+#                             Build-Zeit (kein Binary im Repo, kein Groessenlimit).
+#
+# Ergebnis: pro App ein <Name>.msix + <Name>.cer im Release 'latest'.
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  CERT_PW: "Package!2026"   # PFX-Passwort (Wegwerf, kein echtes Geheimnis)
+
+jobs:
+  package:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: winapp CLI installieren (winget)
+        shell: pwsh
+        run: |
+          winget install microsoft.winappcli --source winget `
+            --accept-source-agreements --accept-package-agreements --disable-interactivity
+          winapp --version
+
+      - name: Alle Apps unter apps/ verpacken + signieren
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root    = (Get-Location).Path
+          $outPath = (New-Item -ItemType Directory -Force -Path (Join-Path $root "output")).FullName
+          $work    = (New-Item -ItemType Directory -Force -Path (Join-Path $env:RUNNER_TEMP "work")).FullName
+          $sevenZip = Join-Path $env:ProgramFiles "7-Zip\7z.exe"
+
+          $appDirs = @(Get-ChildItem -Path apps -Directory -ErrorAction SilentlyContinue)
+          if ($appDirs.Count -eq 0) { Write-Host "Keine App-Ordner unter apps/."; return }
+
+          foreach ($dir in $appDirs) {
+            $name    = $dir.Name
+            $exe     = $null
+            $exeHint = $null
+            Write-Host "===== App '$name' ====="
+
+            $urlFile = Join-Path $dir.FullName "app.url"
+            if (Test-Path $urlFile) {
+              # ---- Modus B: per URL laden ----
+              $cfg = @{}
+              foreach ($line in (Get-Content $urlFile)) {
+                $t = $line.Trim()
+                if ($t -eq "" -or $t.StartsWith("#")) { continue }
+                if ($t -match '^\s*(\w+)\s*=\s*(.+)$') { $cfg[$matches[1].ToLower()] = $matches[2].Trim() }
+                elseif (-not $cfg.ContainsKey('url'))  { $cfg['url'] = $t }
+              }
+              $url = $cfg['url']
+              if (-not $url) { Write-Warning "apps/$name/app.url ohne url - uebersprungen."; continue }
+              $exeHint = $cfg['exe']
+              Write-Host "URL: $url"
+
+              $packDir = Join-Path $work $name
+              New-Item -ItemType Directory -Force -Path $packDir | Out-Null
+              $file = Join-Path $work ("dl_" + [IO.Path]::GetFileName($url.Split('?')[0]))
+              Invoke-WebRequest -Uri $url -OutFile $file
+              switch ([IO.Path]::GetExtension($file).ToLower()) {
+                ".zip" { Expand-Archive -Path $file -DestinationPath $packDir -Force }
+                ".7z"  { & $sevenZip x $file "-o$packDir" -y | Out-Null }
+                ".exe" { Copy-Item $file (Join-Path $packDir ([IO.Path]::GetFileName($file))) }
+                default { throw "Unbekannter Download-Typ fuer $name ($file)" }
+              }
+            }
+            else {
+              # ---- Modus A: committete Dateien ----
+              $packDir = $dir.FullName
+            }
+
+            Push-Location $packDir
+            try {
+              # Einstiegs-exe finden (optionaler Hint aus app.url bevorzugt)
+              if ($exeHint) { $exe = Get-Item $exeHint -ErrorAction SilentlyContinue }
+              if (-not $exe) { $exe = Get-ChildItem -Filter *.exe | Select-Object -First 1 }
+              if (-not $exe) { $exe = Get-ChildItem -Recurse -Filter *.exe | Select-Object -First 1 }
+              if (-not $exe) { Write-Warning "Keine .exe fuer $name - uebersprungen."; continue }
+              Write-Host "exe: $($exe.Name)"
+
+              # 1) Manifest (Icon aus der exe), 2) Publisher setzen
+              winapp manifest generate --executable (Resolve-Path -Relative $exe.FullName)
+              if ($LASTEXITCODE -ne 0) { throw "manifest generate ($name)" }
+              [xml]$m = Get-Content "Package.appxmanifest"
+              $m.Package.Identity.Publisher = "CN=$name"
+              $m.Package.Properties.PublisherDisplayName = $name
+              $m.Save((Resolve-Path "Package.appxmanifest").Path)
+
+              # 3) Zertifikat, 4) MSIX bauen + signieren
+              winapp cert generate --manifest "Package.appxmanifest" --password $env:CERT_PW `
+                --output (Join-Path $outPath "$name.pfx") --export-cer --if-exists overwrite
+              if ($LASTEXITCODE -ne 0) { throw "cert generate ($name)" }
+              winapp package "." --output (Join-Path $outPath "$name.msix") `
+                --cert (Join-Path $outPath "$name.pfx") --cert-password $env:CERT_PW
+              if ($LASTEXITCODE -ne 0) { throw "package ($name)" }
+              Write-Host "OK -> $name.msix"
+            }
+            finally { Pop-Location }
+          }
+
+          # private .pfx nicht veroeffentlichen
+          Remove-Item (Join-Path $outPath "*.pfx") -ErrorAction SilentlyContinue
+          Write-Host "=== Ergebnis ==="
+          Get-ChildItem $outPath | Select-Object Name, Length
+
+      - name: Pakete als Release speichern
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $msix = @(Get-ChildItem output\*.msix -ErrorAction SilentlyContinue)
+          if ($msix.Count -eq 0) { Write-Host "Keine MSIX erzeugt - kein Release."; return }
+          $tag = "latest"
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --title "MSIX-Pakete (neueste Version)" `
+              --notes "Automatisch verpackte & signierte MSIX-Pakete. Pro App: <Name>.msix + <Name>.cer."
+          }
+          Get-ChildItem output\*.msix, output\*.cer | ForEach-Object {
+            gh release upload $tag $_.FullName --clobber
+          }
+          Write-Host "Release 'latest' aktualisiert."
