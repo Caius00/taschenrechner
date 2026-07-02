@@ -163,12 +163,11 @@ jobs:
           $msix = @(Get-ChildItem output\*.msix -ErrorAction SilentlyContinue)
           if ($msix.Count -eq 0) { Write-Host "Keine MSIX erzeugt - kein Release."; return }
           $tag = "latest"
-          gh release view $tag *> $null
-          if ($LASTEXITCODE -ne 0) {
-            gh release create $tag --title "MSIX-Pakete (neueste Version)" `
-              --notes "Automatisch verpackte & signierte MSIX-Pakete. Alle mit EINEM Zertifikat signiert: einmal certificate.cer vertrauen, dann jede <Name>.msix installieren."
-          }
+          # Altes Release + Tag komplett entfernen -> keine veralteten Assets bleiben liegen
+          gh release delete $tag --yes --cleanup-tag *> $null
+          gh release create $tag --title "MSIX-Pakete (neueste Version)" `
+            --notes "Automatisch verpackte & signierte MSIX-Pakete. Alle mit EINEM Zertifikat signiert: einmal certificate.cer vertrauen, dann jede <Name>.msix installieren."
           Get-ChildItem output\*.msix, output\*.cer | ForEach-Object {
-            gh release upload $tag $_.FullName --clobber
+            gh release upload $tag $_.FullName
           }
-          Write-Host "Release 'latest' aktualisiert."
+          Write-Host "Release 'latest' neu erstellt."
