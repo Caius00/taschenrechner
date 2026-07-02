@@ -39,86 +39,97 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $root    = (Get-Location).Path
-          $outPath = (New-Item -ItemType Directory -Force -Path (Join-Path $root "output")).FullName
-          $work    = (New-Item -ItemType Directory -Force -Path (Join-Path $env:RUNNER_TEMP "work")).FullName
+          $root     = (Get-Location).Path
+          $outPath  = (New-Item -ItemType Directory -Force -Path (Join-Path $root "output")).FullName
+          $work     = (New-Item -ItemType Directory -Force -Path (Join-Path $env:RUNNER_TEMP "work")).FullName
           $sevenZip = Join-Path $env:ProgramFiles "7-Zip\7z.exe"
 
           $appDirs = @(Get-ChildItem -Path apps -Directory -ErrorAction SilentlyContinue)
           if ($appDirs.Count -eq 0) { Write-Host "Keine App-Ordner unter apps/."; return }
 
+          $failed = @()
           foreach ($dir in $appDirs) {
-            $name    = $dir.Name
-            $exe     = $null
-            $exeHint = $null
+            $name = $dir.Name
             Write-Host "===== App '$name' ====="
-
-            $urlFile = Join-Path $dir.FullName "app.url"
-            if (Test-Path $urlFile) {
-              # ---- Modus B: per URL laden ----
-              $cfg = @{}
-              foreach ($line in (Get-Content $urlFile)) {
-                $t = $line.Trim()
-                if ($t -eq "" -or $t.StartsWith("#")) { continue }
-                if ($t -match '^\s*(\w+)\s*=\s*(.+)$') { $cfg[$matches[1].ToLower()] = $matches[2].Trim() }
-                elseif (-not $cfg.ContainsKey('url'))  { $cfg['url'] = $t }
-              }
-              $url = $cfg['url']
-              if (-not $url) { Write-Warning "apps/$name/app.url ohne url - uebersprungen."; continue }
-              $exeHint = $cfg['exe']
-              Write-Host "URL: $url"
-
-              $packDir = Join-Path $work $name
-              New-Item -ItemType Directory -Force -Path $packDir | Out-Null
-              $file = Join-Path $work ("dl_" + [IO.Path]::GetFileName($url.Split('?')[0]))
-              Invoke-WebRequest -Uri $url -OutFile $file
-              switch ([IO.Path]::GetExtension($file).ToLower()) {
-                ".zip" { Expand-Archive -Path $file -DestinationPath $packDir -Force }
-                ".7z"  { & $sevenZip x $file "-o$packDir" -y | Out-Null }
-                ".exe" { Copy-Item $file (Join-Path $packDir ([IO.Path]::GetFileName($file))) }
-                default { throw "Unbekannter Download-Typ fuer $name ($file)" }
-              }
-            }
-            else {
-              # ---- Modus A: committete Dateien ----
-              $packDir = $dir.FullName
-            }
-
-            Push-Location $packDir
             try {
-              # Einstiegs-exe finden (optionaler Hint aus app.url bevorzugt)
-              if ($exeHint) { $exe = Get-Item $exeHint -ErrorAction SilentlyContinue }
-              if (-not $exe) { $exe = Get-ChildItem -Filter *.exe | Select-Object -First 1 }
-              if (-not $exe) { $exe = Get-ChildItem -Recurse -Filter *.exe | Select-Object -First 1 }
-              if (-not $exe) { Write-Warning "Keine .exe fuer $name - uebersprungen."; continue }
-              Write-Host "exe: $($exe.Name)"
+              $exeHint = $null
+              $urlFile = Join-Path $dir.FullName "app.url"
 
-              # 1) Manifest (Icon aus der exe), 2) Publisher setzen
-              winapp manifest generate --executable (Resolve-Path -Relative $exe.FullName)
-              if ($LASTEXITCODE -ne 0) { throw "manifest generate ($name)" }
-              [xml]$m = Get-Content "Package.appxmanifest"
-              $m.Package.Identity.Publisher = "CN=$name"
-              $m.Package.Properties.PublisherDisplayName = $name
-              $m.Save((Resolve-Path "Package.appxmanifest").Path)
+              if (Test-Path $urlFile) {
+                # ---- Modus B: per URL laden ----
+                $cfg = @{}
+                foreach ($line in (Get-Content $urlFile)) {
+                  $t = $line.Trim()
+                  if ($t -eq "" -or $t.StartsWith("#")) { continue }
+                  if ($t -match '^\s*(\w+)\s*=\s*(.+)$') { $cfg[$matches[1].ToLower()] = $matches[2].Trim() }
+                  elseif (-not $cfg.ContainsKey('url'))  { $cfg['url'] = $t }
+                }
+                $url = $cfg['url']
+                if (-not $url) { throw "app.url ohne 'url'" }
+                $exeHint = $cfg['exe']
+                Write-Host "URL: $url"
 
-              # 3) Zertifikat, 4) MSIX bauen + signieren
-              winapp cert generate --manifest "Package.appxmanifest" --password $env:CERT_PW `
-                --output (Join-Path $outPath "$name.pfx") --export-cer --if-exists overwrite
-              if ($LASTEXITCODE -ne 0) { throw "cert generate ($name)" }
-              winapp package "." --output (Join-Path $outPath "$name.msix") `
-                --cert (Join-Path $outPath "$name.pfx") --cert-password $env:CERT_PW
-              if ($LASTEXITCODE -ne 0) { throw "package ($name)" }
-              Write-Host "OK -> $name.msix"
+                $packDir = Join-Path $work $name
+                Remove-Item $packDir -Recurse -Force -ErrorAction SilentlyContinue
+                New-Item -ItemType Directory -Force -Path $packDir | Out-Null
+                $file = Join-Path $work ("dl_" + [IO.Path]::GetFileName($url.Split('?')[0]))
+                Invoke-WebRequest -Uri $url -OutFile $file
+                switch ([IO.Path]::GetExtension($file).ToLower()) {
+                  ".zip" { Expand-Archive -Path $file -DestinationPath $packDir -Force }
+                  ".7z"  { & $sevenZip x $file "-o$packDir" -y | Out-Null }
+                  ".exe" { Copy-Item $file (Join-Path $packDir ([IO.Path]::GetFileName($file))) }
+                  default { throw "Unbekannter Download-Typ ($file)" }
+                }
+              }
+              else {
+                # ---- Modus A: committete Dateien ----
+                $packDir = $dir.FullName
+              }
+
+              # Einstiegs-exe finden (Hint bevorzugt); verpackt wird der ORDNER DER EXE
+              $exe = $null
+              if ($exeHint) { $exe = Get-Item (Join-Path $packDir $exeHint) -ErrorAction SilentlyContinue }
+              if (-not $exe) { $exe = Get-ChildItem -Path $packDir -Filter *.exe | Select-Object -First 1 }
+              if (-not $exe) { $exe = Get-ChildItem -Path $packDir -Recurse -Filter *.exe | Select-Object -First 1 }
+              if (-not $exe) { throw "keine .exe gefunden" }
+              $appRoot = $exe.Directory.FullName
+              Write-Host "exe: $($exe.Name)  (Ordner: $appRoot)"
+
+              Push-Location $appRoot
+              try {
+                # 1) Manifest (Icon aus der exe), 2) Publisher setzen
+                winapp manifest generate --executable (".\" + $exe.Name)
+                if ($LASTEXITCODE -ne 0) { throw "manifest generate" }
+                [xml]$m = Get-Content "Package.appxmanifest"
+                $m.Package.Identity.Publisher = "CN=$name"
+                $m.Package.Properties.PublisherDisplayName = $name
+                $m.Save((Resolve-Path "Package.appxmanifest").Path)
+
+                # 3) Zertifikat, 4) MSIX bauen + signieren
+                winapp cert generate --manifest "Package.appxmanifest" --password $env:CERT_PW `
+                  --output (Join-Path $outPath "$name.pfx") --export-cer --if-exists overwrite
+                if ($LASTEXITCODE -ne 0) { throw "cert generate" }
+                winapp package "." --output (Join-Path $outPath "$name.msix") `
+                  --cert (Join-Path $outPath "$name.pfx") --cert-password $env:CERT_PW
+                if ($LASTEXITCODE -ne 0) { throw "package" }
+                Write-Host "OK -> $name.msix"
+              }
+              finally { Pop-Location }
             }
-            finally { Pop-Location }
+            catch {
+              Write-Warning "App '$name' fehlgeschlagen: $_"
+              $failed += $name
+            }
           }
 
           # private .pfx nicht veroeffentlichen
           Remove-Item (Join-Path $outPath "*.pfx") -ErrorAction SilentlyContinue
           Write-Host "=== Ergebnis ==="
           Get-ChildItem $outPath | Select-Object Name, Length
+          if ($failed.Count -gt 0) { throw "Fehlgeschlagene Apps: $($failed -join ', ')" }
 
       - name: Pakete als Release speichern
+        if: always()          # erfolgreiche Pakete auch veroeffentlichen, wenn eine App scheiterte
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
