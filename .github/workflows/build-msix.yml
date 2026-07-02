@@ -38,7 +38,8 @@ jobs:
           New-Item -ItemType Directory -Force -Path input | Out-Null
           Copy-Item Taschenrechner.jar input\
           jpackage --type app-image --name $env:APP_NAME --input input `
-            --main-jar Taschenrechner.jar --main-class Main --dest dist
+            --main-jar Taschenrechner.jar --main-class Main --dest dist `
+            --icon icon\calculator.ico
 
       - name: Install winapp CLI (winget)
         shell: pwsh
@@ -63,6 +64,31 @@ jobs:
           $m.Package.Properties.PublisherDisplayName = "Taschenrechner"
           $m.Save((Resolve-Path $manifestPath))
           Write-Host "Publisher gesetzt: CN=Taschenrechner / Taschenrechner"
+
+      - name: Kachel-/App-Icons durch das Taschenrechner-Icon ersetzen
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Drawing
+          $srcPath = (Resolve-Path ".\icon\calculator.png").Path
+          $assets  = "dist\$($env:APP_NAME)\Assets"
+          $src = [System.Drawing.Image]::FromFile($srcPath)
+          Get-ChildItem "$assets\*.png" | ForEach-Object {
+            $orig = [System.Drawing.Image]::FromFile($_.FullName)
+            $w = $orig.Width; $h = $orig.Height
+            $orig.Dispose()
+            $bmp = New-Object System.Drawing.Bitmap($w, $h)
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $g.SmoothingMode = 'AntiAlias'
+            $g.InterpolationMode = 'HighQualityBicubic'
+            $g.Clear([System.Drawing.Color]::Transparent)
+            $side = [Math]::Min($w, $h)
+            $g.DrawImage($src, [int](($w - $side) / 2), [int](($h - $side) / 2), $side, $side)
+            $g.Dispose()
+            $bmp.Save($_.FullName, [System.Drawing.Imaging.ImageFormat]::Png)
+            $bmp.Dispose()
+          }
+          $src.Dispose()
+          Write-Host "Assets ersetzt: $((Get-ChildItem "$assets\*.png").Count) Icon-Dateien"
 
       - name: Create signing certificate (winapp cert generate)
         shell: pwsh

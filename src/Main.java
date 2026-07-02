@@ -70,7 +70,7 @@ class Rechnerfenster {
         frame.setVisible(true);
     }
 
-    /** Zeichnet ein einfaches Taschenrechner-Icon (Display + Tasten). */
+    /** Zeichnet das Taschenrechner-Icon (Gehaeuse mit Verlauf, Display, Tasten). */
     static BufferedImage erzeugeIcon(int groesse) {
         BufferedImage bild = new BufferedImage(groesse, groesse, BufferedImage.TYPE_INT_ARGB);
         Graphics2D g = bild.createGraphics();
@@ -78,33 +78,54 @@ class Rechnerfenster {
 
         int rand = groesse / 12;
         int b = groesse - 2 * rand;
+        int ecke = groesse / 6;
 
-        // Gehaeuse mit abgerundeten Ecken
-        g.setColor(new Color(0x2D, 0x3A, 0x4A));
-        g.fillRoundRect(rand, rand, b, b, groesse / 6, groesse / 6);
+        // Gehaeuse mit vertikalem Farbverlauf
+        g.setPaint(new GradientPaint(0, rand, new Color(0x3B, 0x4B, 0x63),
+                                     0, rand + b, new Color(0x22, 0x2D, 0x3C)));
+        g.fillRoundRect(rand, rand, b, b, ecke, ecke);
 
-        // Display
-        g.setColor(new Color(0x8E, 0xE6, 0xC1));
-        int dispX = rand + b / 10;
-        int dispY = rand + b / 10;
-        int dispB = b - 2 * (b / 10);
+        int innen = b / 10;
+        int dispX = rand + innen;
+        int dispY = rand + innen;
+        int dispB = b - 2 * innen;
         int dispH = b / 4;
-        g.fillRoundRect(dispX, dispY, dispB, dispH, groesse / 16, groesse / 16);
 
-        // Tasten (3x3 Raster)
-        int startY = dispY + dispH + b / 12;
-        int luecke = b / 12;
-        int tasten = 3;
-        int tasteGr = (dispB - (tasten - 1) * luecke) / tasten;
-        for (int zeile = 0; zeile < tasten; zeile++) {
-            for (int spalte = 0; spalte < tasten; spalte++) {
-                int x = dispX + spalte * (tasteGr + luecke);
-                int y = startY + zeile * (tasteGr + luecke);
-                // untere rechte Taste in Akzentfarbe (wie "=")
-                g.setColor(zeile == tasten - 1 && spalte == tasten - 1
-                        ? new Color(0xFF, 0x9F, 0x43)
-                        : new Color(0xE9, 0xED, 0xF1));
-                g.fillRoundRect(x, y, tasteGr, tasteGr, tasteGr / 3, tasteGr / 3);
+        // Display mit leichtem Verlauf
+        g.setPaint(new GradientPaint(0, dispY, new Color(0xAD, 0xF0, 0xD2),
+                                     0, dispY + dispH, new Color(0x79, 0xD6, 0xB2)));
+        g.fillRoundRect(dispX, dispY, dispB, dispH, groesse / 20, groesse / 20);
+
+        // zwei "Ziffern" rechtsbuendig im Display
+        g.setColor(new Color(0x22, 0x2D, 0x3C));
+        int zh = dispH / 2;
+        int zw = Math.max(2, zh / 2);
+        int zy = dispY + (dispH - zh) / 2;
+        int zx2 = dispX + dispB - innen - zw;
+        int zx1 = zx2 - 2 * zw;
+        g.fillRoundRect(zx1, zy, zw, zh, zw / 2 + 1, zw / 2 + 1);
+        g.fillRoundRect(zx2, zy, zw, zh, zw / 2 + 1, zw / 2 + 1);
+
+        // Tasten (3x3), rechte Spalte als Akzent (Operatoren)
+        int n = 3;
+        int luecke = b / 14;
+        int gridTop = dispY + dispH + luecke;
+        int gridBottom = rand + b - innen;
+        int gridW = dispB;
+        int gridH = gridBottom - gridTop;
+        int tasteGr = (Math.min(gridW, gridH) - (n - 1) * luecke) / n;   // passt in Breite UND Hoehe
+        int belegt = n * tasteGr + (n - 1) * luecke;
+        int offX = dispX + (gridW - belegt) / 2;
+        int offY = gridTop + (gridH - belegt) / 2;
+        int radius = tasteGr / 3;
+        for (int zeile = 0; zeile < n; zeile++) {
+            for (int spalte = 0; spalte < n; spalte++) {
+                int x = offX + spalte * (tasteGr + luecke);
+                int y = offY + zeile * (tasteGr + luecke);
+                g.setColor(spalte == n - 1
+                        ? new Color(0xFF, 0x9F, 0x43)     // Operatoren-Spalte
+                        : new Color(0xEC, 0xF0, 0xF4));    // Zifferntasten
+                g.fillRoundRect(x, y, tasteGr, tasteGr, radius, radius);
             }
         }
 
