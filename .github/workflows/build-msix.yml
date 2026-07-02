@@ -142,8 +142,10 @@ jobs:
       - name: Funktionstest headless (gebuendeltes Corretto + Rechenlogik)
         shell: pwsh
         run: |
-          $java = "dist\$($env:APP_NAME)\runtime\bin\java.exe"
-          $jar  = "dist\$($env:APP_NAME)\app\$($env:APP_NAME).jar"
+          $java = (Resolve-Path "dist\$($env:APP_NAME)\runtime\bin\java.exe").Path
+          $jar  = (Resolve-Path "dist\$($env:APP_NAME)\app\$($env:APP_NAME).jar").Path
+          Write-Host "java: $java"
+          Write-Host "jar:  $jar"
           & $java -cp $jar Main --selftest
           if ($LASTEXITCODE -ne 0) { throw "Selbsttest fehlgeschlagen (exit $LASTEXITCODE)" }
 
