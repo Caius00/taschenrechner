@@ -1,0 +1,78 @@
+name: Build signed MSIX
+
+# Baut die vorhandene Taschenrechner.jar zu einem SIGNIERTEN MSIX.
+# Laeuft auf GitHub-hosted windows-latest (mit Benutzerprofil -> Signieren funktioniert,
+# anders als auf dem GitLab-SaaS-Runner).
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-msix:
+    runs-on: windows-latest
+    env:
+      APP_NAME: Taschenrechner
+      PUBLISHER: CN=Taschenrechner
+      CERT_PW: "Taschenrechner!2026"
+      WINAPP_URL: https://github.com/microsoft/winappCli/releases/download/v0.4.0/winappcli-x64.zip
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # JDK: Amazon Corretto 26 (setup-java cached es automatisch)
+      - name: Set up Corretto 26
+        uses: actions/setup-java@v4
+        with:
+          distribution: corretto
+          java-version: '26'
+
+      - name: Build native .exe (jpackage)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path input | Out-Null
+          Copy-Item Taschenrechner.jar input\
+          jpackage --type app-image --name $env:APP_NAME --input input `
+            --main-jar Taschenrechner.jar --main-class Main --dest dist
+
+      - name: Get winapp CLI
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri $env:WINAPP_URL -OutFile winappcli.zip
+          Expand-Archive -Path winappcli.zip -DestinationPath winappcli -Force
+
+      - name: Generate manifest + set publisher
+        shell: pwsh
+        run: |
+          $winapp = Join-Path (Resolve-Path .\winappcli) 'winapp.exe'
+          Push-Location "dist\$env:APP_NAME"
+          & $winapp manifest generate --executable ".\$($env:APP_NAME).exe"
+          Pop-Location
+          $manifestPath = "dist\$($env:APP_NAME)\Package.appxmanifest"
+          [xml]$m = Get-Content $manifestPath
+          $m.Package.Identity.Publisher = $env:PUBLISHER
+          $m.Save((Resolve-Path $manifestPath))
+
+      - name: Create signing certificate
+        shell: pwsh
+        run: .\ci\make-cert.ps1 -Subject $env:PUBLISHER -Password $env:CERT_PW
+
+      - name: Package + sign MSIX
+        shell: pwsh
+        run: |
+          $winapp = Join-Path (Resolve-Path .\winappcli) 'winapp.exe'
+          & $winapp package ".\dist\$($env:APP_NAME)" --output ".\$($env:APP_NAME).msix" `
+            --cert ".\devcert.pfx" --cert-password $env:CERT_PW
+          if ($LASTEXITCODE -ne 0) { throw "winapp package fehlgeschlagen (exit $LASTEXITCODE)" }
+          Get-ChildItem *.msix, *.cer | Select-Object Name, Length
+
+      - name: Upload artifacts (MSIX + Zertifikat)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Taschenrechner-msix
+          path: |
+            *.msix
+            devcert.cer
+          if-no-files-found: error
