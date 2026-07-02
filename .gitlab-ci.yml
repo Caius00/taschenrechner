@@ -69,8 +69,19 @@ build-msix-windows:
     - Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
     - .\ci\make-cert.ps1 -Subject $env:PUBLISHER -Password $env:CERT_PW
 
-    # --- 5) MSIX bauen und signieren (--verbose fuer Fehlerdetails) ---
-    - '& $winapp package ".\dist\$env:APP_NAME" --cert ".\devcert.pfx" --cert-password $env:CERT_PW --verbose'
+    # --- 5) MSIX UNSIGNIERT bauen (winapp darf das PFX nicht laden -> Access denied) ---
+    - '& $winapp package ".\dist\$($env:APP_NAME)" --output ".\$($env:APP_NAME).msix"'
+
+    # --- 6) Separat mit signtool signieren (laedt das PFX anders als winapp) ---
+    - |
+      try {
+          & $winapp tool signtool sign /fd SHA256 /f ".\devcert.pfx" /p $env:CERT_PW ".\$($env:APP_NAME).msix"
+          if ($LASTEXITCODE -ne 0) { throw "signtool exit code $LASTEXITCODE" }
+          Write-Host "MSIX erfolgreich signiert."
+      } catch {
+          Write-Warning ("Signieren auf dem Runner fehlgeschlagen: " + $_)
+          Write-Warning "MSIX bleibt UNSIGNIERT - bitte lokal signieren (siehe README)."
+      }
 
     # --- Kontrolle: was wurde erzeugt? ---
     - Get-ChildItem -Path . -Include *.msix,*.cer -Recurse | Select-Object FullName
