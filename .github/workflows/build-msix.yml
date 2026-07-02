@@ -142,8 +142,10 @@ jobs:
       - name: Funktionstest headless (gebuendeltes Corretto + Rechenlogik)
         shell: pwsh
         run: |
-          $java = (Resolve-Path "dist\$($env:APP_NAME)\runtime\bin\java.exe").Path
-          $jar  = (Resolve-Path "dist\$($env:APP_NAME)\app\$($env:APP_NAME).jar").Path
+          $java = (Get-ChildItem -Path dist -Recurse -Filter java.exe | Select-Object -First 1).FullName
+          $jar  = (Get-ChildItem -Path dist -Recurse -Filter "$($env:APP_NAME).jar" | Select-Object -First 1).FullName
+          if (-not $java) { throw "java.exe nicht im app-image gefunden" }
+          if (-not $jar)  { throw "$($env:APP_NAME).jar nicht im app-image gefunden" }
           Write-Host "java: $java"
           Write-Host "jar:  $jar"
           & $java -cp $jar Main --selftest
