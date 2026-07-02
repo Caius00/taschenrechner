@@ -110,7 +110,7 @@ jobs:
                   --output (Join-Path $outPath "$name.pfx") --export-cer --if-exists overwrite
                 if ($LASTEXITCODE -ne 0) { throw "cert generate" }
                 winapp package "." --output (Join-Path $outPath "$name.msix") `
-                  --cert (Join-Path $outPath "$name.pfx") --cert-password $env:CERT_PW
+                  --cert (Join-Path $outPath "$name.pfx") --cert-password $env:CERT_PW --verbose
                 if ($LASTEXITCODE -ne 0) { throw "package" }
                 Write-Host "OK -> $name.msix"
               }
